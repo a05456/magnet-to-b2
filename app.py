@@ -67,16 +67,8 @@ def process_magnet_to_b2(magnet_uri, job_id="", progress=gr.Progress()):
         yield log(f"📁 נוצרה תיקייה זמנית: {temp_dir}")
         job_update(job_id, stage="downloading", name=magnet_uri.strip()[:80])
 
-        # שרת Kamatera — 4GB RAM, אין צורך בהגבלות של Render.
-        # הגבלות קלות בלבד כדי לא לאכול את כל הזיכרון על torrents גדולים
+        # שרת Kamatera — 12GB RAM, ללא הגבלותlibtorrent
         ses = lt.session({
-            "connections_limit": 200,
-            "active_downloads": 4,
-            "active_seeds": 2,
-            "max_queued_disk_bytes": 32 * 1024 * 1024,  # 32 MB disk cache
-            "file_pool_size": 64,
-            "enable_upnp": False,
-            "enable_natpmp": False,
             "listen_interfaces": "0.0.0.0:0",
         })
         params = {
