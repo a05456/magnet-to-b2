@@ -8,9 +8,7 @@ from datetime import datetime, timezone
 
 import gradio as gr
 import libtorrent as lt
-import uvicorn
 from b2sdk.v2 import InMemoryAccountInfo, B2Api
-from gradio.routes import App
 
 # מעקב משימות בזיכרון: {job_id: {...}}
 JOBS = {}
@@ -173,26 +171,30 @@ with gr.Blocks(title="Magnet to Backblaze B2") as demo:
     )
 
 
-app = App.create_app(demo)
-
-
-@app.get("/status")
-def status(job_id: str = ""):
-    if not job_id:
-        with JOBS_LOCK:
-            jobs = sorted(JOBS.values(), key=lambda j: j.get("created_at", ""), reverse=True)[:20]
-        return {"jobs": [{k: v for k, v in j.items() if k != "created_at"} for j in jobs]}
-    job = job_get(job_id)
-    if not job:
-        return {"error": "job not found", "id": job_id}
-    return job
-
-
-@app.get("/health")
-def health():
-    return {"ok": True}
-
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "7860"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    # launch() מחזיר את ה-FastAPI app — מוסיפים אליו routes משלנו
+    app, _, _ = demo.launch(
+        server_name="0.0.0.0",
+        server_port=port,
+        prevent_thread_lock=True,
+    )
+
+    @app.get("/status")
+    def status(job_id: str = ""):
+        if not job_id:
+            with JOBS_LOCK:
+                jobs = sorted(JOBS.values(), key=lambda j: j.get("created_at", ""), reverse=True)[:20]
+            return {"jobs": [{k: v for k, v in j.items() if k != "created_at"} for j in jobs]}
+        job = job_get(job_id)
+        if not job:
+            return {"error": "job not found", "id": job_id}
+        return job
+
+    @app.get("/health")
+    def health():
+        return {"ok": True}
+
+    # השרת רץ ב-thread — משאירים את ה-process חי
+    while True:
+        time.sleep(3600)
