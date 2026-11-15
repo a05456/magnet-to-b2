@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Setup script for Kamatera magnet-to-b2 server (Azure Linux / RHEL family - dnf)
+# Setup script for Kamatera magnet-to-b2 server (Ubuntu/Debian - apt)
 set -euo pipefail
 
 APP_DIR=/opt/magnet-b2
-PORT="${PORT:-80}"
 
 echo "=== [1/5] Installing system packages ==="
-dnf install -y git python3.12 python3.12-pip 2>/dev/null || dnf install -y git python3 python3-pip
+apt-get update -y
+DEBIAN_FRONTEND=noninteractive apt-get install -y git python3.12 python3.12-venv python3-pip curl
 PY=python3.12
 command -v "$PY" >/dev/null 2>&1 || PY=python3
 echo "Using python: $($PY --version 2>&1) ($PY)"
@@ -47,7 +47,6 @@ EnvironmentFile=/etc/magnet-b2.env
 ExecStart=$APP_DIR/venv/bin/python app.py
 Restart=always
 RestartSec=5
-# Torrent downloads need disk + memory headroom
 LimitNOFILE=65536
 
 [Install]
