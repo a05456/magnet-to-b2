@@ -67,7 +67,19 @@ def process_magnet_to_b2(magnet_uri, job_id="", progress=gr.Progress()):
         yield log(f"📁 נוצרה תיקייה זמנית: {temp_dir}")
         job_update(job_id, stage="downloading", name=magnet_uri.strip()[:80])
 
-        ses = lt.session()
+        # הגבלות זיכרון — free tier של Render הוא 512MB
+        ses = lt.session({
+            "download_rate_limit": 8 * 1024 * 1024,   # 8 MB/s — מרסנת buffers באוויר
+            "upload_rate_limit": 1024 * 1024,          # 1 MB/s — không cần upload torrent
+            "connections_limit": 100,
+            "active_downloads": 3,
+            "active_seeds": 3,
+            "max_queued_disk_bytes": 8 * 1024 * 1024,   # קאש דיסק קטן
+            "file_pool_size": 20,
+            "enable_upnp": False,
+            "enable_natpmp": False,
+            "listen_interfaces": "0.0.0.0:0",
+        })
         params = {
             "save_path": temp_dir,
             "url": magnet_uri.strip(),
