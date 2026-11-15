@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import shutil
 import tempfile
@@ -33,7 +34,7 @@ def job_get(job_id):
         return dict(JOBS.get(job_id, {}))
 
 
-def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
+def process_magnet_to_b2(magnet_uri, job_id="", progress=gr.Progress()):
     key_id = os.environ.get("B2_APPLICATION_KEY_ID")
     app_key = os.environ.get("B2_APPLICATION_KEY")
     bucket_name = os.environ.get("B2_BUCKET")
@@ -48,11 +49,13 @@ def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
     def log(msg):
         logs.append(msg)
         print(msg, flush=True)
-        return "\n".join(logs)
+        text = "\n".join(logs)
+        job_update(job_id, logs_text=text)
+        return text
 
     temp_dir = tempfile.mkdtemp()
     ses = None
-    job_id = uuid.uuid4().hex[:10]
+    job_id = re.sub(r"[^\w-]", "", (job_id or "").strip())[:64] or uuid.uuid4().hex[:10]
     job_update(job_id, stage="started", progress=0.0, created_at=datetime.now(timezone.utc).isoformat())
 
     try:
@@ -161,12 +164,14 @@ with gr.Blocks(title="Magnet to Backblaze B2") as demo:
             lines=2
         )
 
+    job_id_input = gr.Textbox(visible=False)
+
     submit_btn = gr.Button("התחל הורדה והעלאה", variant="primary")
     output_log = gr.Textbox(label="יומן פעילות (Logs)", lines=15, interactive=False)
 
     submit_btn.click(
         fn=process_magnet_to_b2,
-        inputs=[magnet_input],
+        inputs=[magnet_input, job_id_input],
         outputs=[output_log]
     )
 
