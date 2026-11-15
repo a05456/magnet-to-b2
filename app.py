@@ -35,14 +35,19 @@ def job_get(job_id):
 
 
 def process_magnet_to_b2(magnet_uri, job_id="", progress=gr.Progress()):
+    job_id = re.sub(r"[^\w-]", "", (job_id or "").strip())[:64] or uuid.uuid4().hex[:10]
+    job_update(job_id, stage="started", progress=0.0, created_at=datetime.now(timezone.utc).isoformat())
+
     key_id = os.environ.get("B2_APPLICATION_KEY_ID")
     app_key = os.environ.get("B2_APPLICATION_KEY")
     bucket_name = os.environ.get("B2_BUCKET")
 
     if not all([key_id, app_key, bucket_name]):
+        job_update(job_id, stage="error", error="missing B2 credentials")
         return "❌ שגיאה: חסרים פרטי התחברות ל-B2 (B2_APPLICATION_KEY_ID, B2_APPLICATION_KEY, B2_BUCKET) בהגדרות ה-Environment Variables."
 
     if not magnet_uri or not magnet_uri.strip().startswith("magnet:?"):
+        job_update(job_id, stage="error", error="invalid magnet uri")
         return "❌ שגיאה: אנא הזן קישור magnet תקין."
 
     logs = []
@@ -55,8 +60,6 @@ def process_magnet_to_b2(magnet_uri, job_id="", progress=gr.Progress()):
 
     temp_dir = tempfile.mkdtemp()
     ses = None
-    job_id = re.sub(r"[^\w-]", "", (job_id or "").strip())[:64] or uuid.uuid4().hex[:10]
-    job_update(job_id, stage="started", progress=0.0, created_at=datetime.now(timezone.utc).isoformat())
 
     try:
         yield log(f"🆔 מזהה משימה: {job_id}")
