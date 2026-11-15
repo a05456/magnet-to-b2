@@ -2,10 +2,37 @@ import os
 import time
 import shutil
 import tempfile
+import threading
+import uuid
+from datetime import datetime, timezone
 
 import gradio as gr
 import libtorrent as lt
+import uvicorn
 from b2sdk.v2 import InMemoryAccountInfo, B2Api
+from gradio.routes import App
+
+# מעקב משימות בזיכרון: {job_id: {...}}
+JOBS = {}
+JOBS_LOCK = threading.Lock()
+JOBS_MAX = 200
+
+
+def job_update(job_id, **fields):
+    with JOBS_LOCK:
+        job = JOBS.setdefault(job_id, {"id": job_id})
+        job.update(fields)
+        job["updated_at"] = datetime.now(timezone.utc).isoformat()
+        # הגבלת גודל — מוחק את הMost ישנות
+        if len(JOBS) > JOBS_MAX:
+            oldest = sorted(JOBS.values(), key=lambda j: j.get("created_at", ""))
+            for j in oldest[: len(JOBS) - JOBS_MAX]:
+                JOBS.pop(j["id"], None)
+
+
+def job_get(job_id):
+    with JOBS_LOCK:
+        return dict(JOBS.get(job_id, {}))
 
 
 def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
@@ -27,10 +54,14 @@ def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
 
     temp_dir = tempfile.mkdtemp()
     ses = None
+    job_id = uuid.uuid4().hex[:10]
+    job_update(job_id, stage="started", progress=0.0, created_at=datetime.now(timezone.utc).isoformat())
 
     try:
+        yield log(f"🆔 מזהה משימה: {job_id}")
         yield log("🚀 מתחיל תהליך...")
         yield log(f"📁 נוצרה תיקייה זמנית: {temp_dir}")
+        job_update(job_id, stage="downloading", name=magnet_uri.strip()[:80])
 
         ses = lt.session()
         params = {
@@ -42,6 +73,7 @@ def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
 
         yield log("⏳ מחפש metadata עבור הקישור...")
         progress(0, desc="מחפש metadata...")
+        job_update(job_id, stage="fetching_metadata")
 
         timeout = 120
         start_wait = time.time()
@@ -53,6 +85,7 @@ def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
         torrent_info = handle.get_torrent_info()
         total_mb = torrent_info.total_size() / (1024 * 1024)
         yield log(f"✅ Metadata התקבל! שם: {torrent_info.name()} | גודל: {total_mb:.2f} MB")
+        job_update(job_id, stage="downloading", name=torrent_info.name(), size_mb=round(total_mb, 2))
 
         last_pct = -1
         while not handle.is_seed():
@@ -60,6 +93,7 @@ def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
             pct = s.progress * 100
             rate_kb = s.download_rate / 1024
             progress(s.progress, desc=f"מוריד: {pct:.1f}% ({rate_kb:.1f} KB/s)")
+            job_update(job_id, progress=round(s.progress, 4), speed_kb_s=round(rate_kb, 1), stage="downloading")
             int_pct = int(pct)
             if int_pct != last_pct:
                 yield log(f"⬇️ מוריד: {int_pct}% ({rate_kb:.1f} KB/s)")
@@ -89,18 +123,22 @@ def process_magnet_to_b2(magnet_uri, progress=gr.Progress()):
 
         total_files = len(all_files)
         yield log(f"⬆️ נמצאו {total_files} קבצים להעלאה...")
+        job_update(job_id, stage="uploading", files_total=total_files, files_done=0, progress=0.0)
 
         for idx, (full_path, rel_path) in enumerate(all_files, start=1):
             progress((idx - 1) / total_files, desc=f"מעלה ({idx}/{total_files}): {rel_path}")
             yield log(f"⬆️ מעלה: {rel_path}...")
             bucket.upload_local_file(local_file=full_path, file_name=rel_path)
+            job_update(job_id, files_done=idx, current_file=rel_path, progress=round(idx / total_files, 4))
             yield log(f"✅ הועלה בהצלחה: {rel_path}")
 
         progress(1.0, desc="הושלם!")
+        job_update(job_id, stage="completed", progress=1.0)
         yield log("==========================================")
         yield log("🎊 התהליך הושלם בהצלחה! כל הקבצים הועלו ל-B2.")
 
     except Exception as e:
+        job_update(job_id, stage="error", error=str(e))
         yield log(f"❌ אירעה שגיאה: {str(e)}")
 
     finally:
@@ -135,6 +173,26 @@ with gr.Blocks(title="Magnet to Backblaze B2") as demo:
     )
 
 
+app = App.create_app(demo)
+
+
+@app.get("/status")
+def status(job_id: str = ""):
+    if not job_id:
+        with JOBS_LOCK:
+            jobs = sorted(JOBS.values(), key=lambda j: j.get("created_at", ""), reverse=True)[:20]
+        return {"jobs": [{k: v for k, v in j.items() if k != "created_at"} for j in jobs]}
+    job = job_get(job_id)
+    if not job:
+        return {"error": "job not found", "id": job_id}
+    return job
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "7860"))
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)

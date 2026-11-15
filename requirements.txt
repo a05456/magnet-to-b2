@@ -1,3 +1,4 @@
 gradio
 libtorrent
 b2sdk
+uvicorn
